@@ -1,0 +1,92 @@
+# Ship-an-update pipeline.
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# ...and this workflow compiles firmware for every board, then publishes a
+# GitHub release containing:
+#   soon-<board>.bin        (what devices download over-the-air)
+#   soon-<board>-full.bin   (flash at address 0x0 for first-time USB installs)
+#   manifest.json           (version + md5 list the devices check)
+#
+# Devices poll the LATEST release, so publishing here IS deploying.
+
+name: Build & Release Firmware
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO + esptool
+        run: pip install platformio esptool
+
+      - name: Build all boards
+        env:
+          FW_VERSION: ${{ github.ref_name }}
+        run: |
+          pio run -e tdisplay -e tdisplay-s3 -e tdisplay-s3-amoled
+
+      - name: Package release assets
+        env:
+          FW_VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p out
+          cp .pio/build/tdisplay/firmware.bin           out/soon-tdisplay.bin
+          cp .pio/build/tdisplay-s3/firmware.bin        out/soon-tdisplay-s3.bin
+          cp .pio/build/tdisplay-s3-amoled/firmware.bin out/soon-tdisplay-s3-amoled.bin
+
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -n1)
+
+          # single-file images for easy first-time USB flashing (address 0x0)
+          python -m esptool --chip esp32 merge_bin -o out/soon-tdisplay-full.bin \
+            0x1000 .pio/build/tdisplay/bootloader.bin \
+            0x8000 .pio/build/tdisplay/partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 .pio/build/tdisplay/firmware.bin
+
+          python -m esptool --chip esp32s3 merge_bin -o out/soon-tdisplay-s3-full.bin \
+            0x0    .pio/build/tdisplay-s3/bootloader.bin \
+            0x8000 .pio/build/tdisplay-s3/partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 .pio/build/tdisplay-s3/firmware.bin
+
+          python -m esptool --chip esp32s3 merge_bin -o out/soon-tdisplay-s3-amoled-full.bin \
+            0x0    .pio/build/tdisplay-s3-amoled/bootloader.bin \
+            0x8000 .pio/build/tdisplay-s3-amoled/partitions.bin \
+            0xe000 "$BOOT_APP0" \
+            0x10000 .pio/build/tdisplay-s3-amoled/firmware.bin
+
+          python3 - <<'PYEOF'
+          import hashlib, json, os
+          version = os.environ["FW_VERSION"].lstrip("v")
+          builds = {}
+          for board in ["tdisplay", "tdisplay-s3", "tdisplay-s3-amoled"]:
+              path = f"out/soon-{board}.bin"
+              data = open(path, "rb").read()
+              builds[board] = {
+                  "file": f"soon-{board}.bin",
+                  "md5": hashlib.md5(data).hexdigest(),
+                  "size": len(data),
+              }
+          manifest = {"version": version, "builds": builds}
+          json.dump(manifest, open("out/manifest.json", "w"), indent=2)
+          print(json.dumps(manifest, indent=2))
+          PYEOF
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

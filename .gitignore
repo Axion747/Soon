@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+out/
+*.bin
+__pycache__/
+_to_delete/
