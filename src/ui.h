@@ -10,7 +10,9 @@
 // Tapping the wifi box (or a short press of the side button) shows the
 // pairing instructions for ~10 s, then the bento page returns.
 
-enum class WifiIcon { RED, YELLOW, GREEN };  // offline / connecting / connected
+enum class WifiIcon { RED, YELLOW, GREEN, ORANGE };
+// RED = offline (tap to reconnect)   YELLOW = reconnecting
+// GREEN = connected                  ORANGE = checking for firmware update
 
 void uiBegin();
 void uiBoot();   // "wanga" fade-in + heart (blocking, a few seconds)

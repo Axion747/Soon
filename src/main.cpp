@@ -48,6 +48,7 @@ static bool s_firstCheckDone = false;
 // ---------- display ----------
 static uint32_t s_lastDraw = 0;
 static uint32_t s_wifiInfoUntil = 0;    // >now = pairing overlay is showing
+static bool s_updatingIcon = false;     // orange "updating" during a check
 
 // ---------- countdown ----------
 static time_t s_targetEpoch = 0;
@@ -253,6 +254,7 @@ static void runUpdateCheck() {
       portalState().upd = UpdState::ERR;
       break;
   }
+  s_updatingIcon = false;  // orange "updating" -> back to "connected"
   uiForceRedraw();
   s_lastDraw = 0;
 }
@@ -313,21 +315,30 @@ static void pollButton(Btn &b, void (*onShort)(), void (*onLong)()) {
   }
 }
 
-// Reconnect in place — used by the wifi-box tap AND the side button, so the
-// non-touch LCD board has the exact same ability.
-static void tryReconnect() {
-  if (s_net == NetState::TRYING) return;
-  if (s_net == NetState::ONLINE && WiFi.status() == WL_CONNECTED) return;
-  bool useSaved = settings().ssid.length() > 0;
-  if (!useSaved && strlen(DEFAULT_WIFI_SSID) == 0) return;
-  netTry(useSaved ? settings().ssid : DEFAULT_WIFI_SSID,
-         useSaved ? settings().pass : DEFAULT_WIFI_PASS,
-         /*pending=*/!useSaved, /*fromPortal=*/false);
+// The wifi box (tap or side button — identical): offline it reconnects;
+// already connected, it checks for a firmware update — icon goes orange
+// "updating" during the check, then back to green "connected" (or straight
+// into the update screen + reboot when there IS a new version).
+static void wifiBoxAction() {
+  bool online = (s_net == NetState::ONLINE && WiFi.status() == WL_CONNECTED);
+  if (online) {
+    if (!s_updatingIcon) {
+      s_updatingIcon = true;       // show orange right away...
+      s_forceUpdateCheck = true;   // ...the check runs on the next loop pass
+    }
+  } else if (s_net != NetState::TRYING) {
+    bool useSaved = settings().ssid.length() > 0;
+    if (useSaved || strlen(DEFAULT_WIFI_SSID) > 0) {
+      netTry(useSaved ? settings().ssid : DEFAULT_WIFI_SSID,
+             useSaved ? settings().pass : DEFAULT_WIFI_PASS,
+             /*pending=*/!useSaved, /*fromPortal=*/false);
+    }
+  }
   s_lastDraw = 0;
 }
 
 static void btnAShort() {  // side button = same as tapping the wifi box
-  tryReconnect();
+  wifiBoxAction();
 }
 
 static void btnALong() {
@@ -344,7 +355,10 @@ static void btnBShort() {  // BOOT button = pairing/info overlay
 
 // ---------- drawing ----------
 static WifiIcon wifiIconState() {
-  if (s_net == NetState::ONLINE && WiFi.status() == WL_CONNECTED) return WifiIcon::GREEN;
+  if (s_net == NetState::ONLINE && WiFi.status() == WL_CONNECTED) {
+    return s_updatingIcon ? WifiIcon::ORANGE : WifiIcon::GREEN;
+  }
+  s_updatingIcon = false;  // lost the connection mid-check — don't get stuck
   if (s_net == NetState::TRYING) return WifiIcon::YELLOW;
   return WifiIcon::RED;
 }
@@ -455,7 +469,7 @@ void loop() {
     if (s_wifiInfoUntil > now) {
       s_wifiInfoUntil = 0;             // dismiss the (BOOT-opened) overlay
     } else if (zone == 1) {
-      tryReconnect();
+      wifiBoxAction();
     }
     s_lastDraw = 0;
   }

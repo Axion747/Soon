@@ -44,7 +44,7 @@ static void flush() {
 
 // ---- palette -------------------------------------------------
 static uint16_t C_BG, C_CARD, C_LINE, C_ACCENT, C_TEXT, C_DIM, C_MINT;
-static uint16_t C_RED, C_YEL, C_GRN;
+static uint16_t C_RED, C_YEL, C_GRN, C_ORA;
 
 enum class Screen { NONE, BOOT, HOME, WIFIINFO, UPDATING, NOTICE };
 static Screen s_screen = Screen::NONE;
@@ -152,6 +152,7 @@ void uiBegin() {
   C_RED    = g->color565(232, 106, 100);  // offline
   C_YEL    = g->color565(235, 200, 100);  // connecting
   C_GRN    = C_ACCENT;                    // connected = the brand mint
+  C_ORA    = g->color565(240, 158, 72);   // update check in progress
   g->fillScreen(C_BG);
   flush();
 }
@@ -276,16 +277,17 @@ static void drawPixelNumber(const String &numStr, int cx, int cy, int maxW,
 // arc path. No background masking at all, so nothing can ever leak outside
 // the card (the old carve-out approach left stray pixels on short cards).
 static void drawWifiIcon(int cx, int cy, int size, uint16_t color) {
-  int th = max(3, size / 5);
-  int rad = th / 2 + 1;
+  // slim strokes: small beads laid densely along the two arcs
+  int rad = max(2, size / 14);
   for (int ring = 0; ring < 2; ring++) {
     int r = (ring == 0) ? size : (size * 2) / 3;
-    for (int a = -45; a <= 45; a += 5) {   // fan opens upward, ±45°
+    for (int a = -45; a <= 45; a += 3) {   // fan opens upward, ±45°
       float t = a * 0.0174533f;
-      g->fillCircle(cx + (int)(r * sinf(t)), cy - (int)(r * cosf(t)), rad, color);
+      g->fillCircle(cx + (int)lroundf(r * sinf(t)), cy - (int)lroundf(r * cosf(t)),
+                    rad, color);
     }
   }
-  g->fillCircle(cx, cy, max(3, th - 1), color);  // the dot
+  g->fillCircle(cx, cy, max(3, rad + 1), color);  // the dot
 }
 
 // ---- boot ----------------------------------------------------
@@ -372,9 +374,11 @@ void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
   int capH = bigPanel() ? 22 : 14;
   uint16_t wcol = (wifi == WifiIcon::GREEN) ? C_GRN
                   : (wifi == WifiIcon::YELLOW) ? C_YEL
+                  : (wifi == WifiIcon::ORANGE) ? C_ORA
                                                : C_RED;
   const char *wlabel = (wifi == WifiIcon::GREEN) ? "connected"
                        : (wifi == WifiIcon::YELLOW) ? "reconnecting"
+                       : (wifi == WifiIcon::ORANGE) ? "updating"
                                                     : "tap to reconnect";
   int iconSize = bigPanel() ? 30 : 18;
   drawWifiIcon(tr.x + tr.w / 2, tr.y + (tr.h - capH) / 2 + iconSize / 2 + 2,
