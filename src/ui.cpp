@@ -126,6 +126,10 @@ void uiBegin() {
     s_touch.setPins(PIN_TOUCH_RST, PIN_TOUCH_INT);
     s_touch.begin(Wire, 0x15, PIN_TOUCH_SDA, PIN_TOUCH_SCL);
     s_touchOk = true;  // the ACK above is the reliable signal, not begin()
+    // CST816 puts itself into deep sleep after a few idle seconds and then
+    // NACKs our polling (the "i2cRead returned Error -1" spam). We're a
+    // plugged-in gadget — keep it awake.
+    s_touch.disableAutoSleep();
     // map native portrait coordinates to our landscape rotation
     s_touch.setMaxCoordinates(tft.width(), tft.height());
     s_touch.setSwapXY(true);
