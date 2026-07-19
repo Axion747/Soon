@@ -111,20 +111,25 @@ void uiBegin() {
   digitalWrite(TFT_BL, HIGH);
 #endif
 #ifdef SOON_LCD_TOUCH
-  // probe the CST816 before init (the driver's return value is unreliable
-  // when the chip is absent) — LilyGO's own code does the same dance
+  // The CST816 sits in reset until its RST pin goes HIGH — probing the I2C
+  // bus before releasing reset always reads "not found". So: pulse reset,
+  // give the chip its boot time, THEN probe.
+  pinMode(PIN_TOUCH_RST, OUTPUT);
+  digitalWrite(PIN_TOUCH_RST, LOW);
+  delay(30);
+  digitalWrite(PIN_TOUCH_RST, HIGH);
+  delay(120);
   Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
   Wire.beginTransmission(0x15);  // CST816 I2C address
   if (Wire.endTransmission() == 0) {
     s_touch.setTouchDrvModel(TouchDrv_CST8XX);
     s_touch.setPins(PIN_TOUCH_RST, PIN_TOUCH_INT);
-    s_touchOk = s_touch.begin(Wire, 0x15, PIN_TOUCH_SDA, PIN_TOUCH_SCL);
-    if (s_touchOk) {
-      // map native portrait coordinates to our landscape rotation
-      s_touch.setMaxCoordinates(tft.width(), tft.height());
-      s_touch.setSwapXY(true);
-      s_touch.setMirrorXY(true, false);
-    }
+    s_touch.begin(Wire, 0x15, PIN_TOUCH_SDA, PIN_TOUCH_SCL);
+    s_touchOk = true;  // the ACK above is the reliable signal, not begin()
+    // map native portrait coordinates to our landscape rotation
+    s_touch.setMaxCoordinates(tft.width(), tft.height());
+    s_touch.setSwapXY(true);
+    s_touch.setMirrorXY(true, false);
   }
   Serial.printf("[ui] touch: %s\n", s_touchOk ? "CST816 OK" : "not found");
 #endif
@@ -191,10 +196,12 @@ static uint16_t lerp565(uint16_t a, uint16_t b, float t) {
 }
 
 static void drawHeart(int cx, int cy, int r, uint16_t color) {
-  g->fillCircle(cx - r, cy, r, color);
-  g->fillCircle(cx + r, cy, r, color);
-  g->fillTriangle(cx - 2 * r - 1, cy + r / 2, cx + 2 * r + 1, cy + r / 2,
-                  cx, cy + 2 * r + r / 2, color);
+  // lobes overlap in the middle so it reads as ONE heart, not two blobs
+  int o = (2 * r) / 3;
+  g->fillCircle(cx - o, cy, r, color);
+  g->fillCircle(cx + o, cy, r, color);
+  g->fillTriangle(cx - o - r, cy + r / 3, cx + o + r, cy + r / 3,
+                  cx, cy + o + r + 1, color);
 }
 
 // Big smooth text (auto-shrinks); used by boot + overlay screens
@@ -260,20 +267,21 @@ static void drawPixelNumber(const String &numStr, int cx, int cy, int maxW,
   }
 }
 
-// ---- wifi fan icon (dot + two arcs), no angle-math surprises --
-static void drawWifiIcon(int cx, int cy, int size, uint16_t color, uint16_t bg) {
-  // rings, clipped to a ~90° fan opening upward from the dot
-  int r1 = size, r2 = (size * 2) / 3;
+// ---- wifi fan icon (dot + two arcs) --------------------------
+// Drawn ADDITIVELY: the arcs are laid down as overlapping dots along the
+// arc path. No background masking at all, so nothing can ever leak outside
+// the card (the old carve-out approach left stray pixels on short cards).
+static void drawWifiIcon(int cx, int cy, int size, uint16_t color) {
   int th = max(3, size / 5);
-  g->fillCircle(cx, cy, r1, color);
-  g->fillCircle(cx, cy, r1 - th, bg);
-  g->fillCircle(cx, cy, r2, color);
-  g->fillCircle(cx, cy, r2 - th, bg);
-  int m = size + th + 2;
-  g->fillRect(cx - m, cy + 1, 2 * m, m, bg);              // below the dot
-  g->fillTriangle(cx, cy + 1, cx - m, cy + 1, cx - m, cy - m, bg);  // left wedge
-  g->fillTriangle(cx, cy + 1, cx + m, cy + 1, cx + m, cy - m, bg);  // right wedge
-  g->fillCircle(cx, cy, max(3, th - 1), color);           // the dot
+  int rad = th / 2 + 1;
+  for (int ring = 0; ring < 2; ring++) {
+    int r = (ring == 0) ? size : (size * 2) / 3;
+    for (int a = -45; a <= 45; a += 5) {   // fan opens upward, ±45°
+      float t = a * 0.0174533f;
+      g->fillCircle(cx + (int)(r * sinf(t)), cy - (int)(r * cosf(t)), rad, color);
+    }
+  }
+  g->fillCircle(cx, cy, max(3, th - 1), color);  // the dot
 }
 
 // ---- boot ----------------------------------------------------
@@ -342,22 +350,22 @@ void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
   drawCard(tr);
   drawCard(bot);
 
-  // ---- top-left: the date/countdown ----
-  int capH = bigPanel() ? 22 : 14;
+  // ---- top-left: just the number, as big as the card allows ----
   if (daysKnown && daysLeft <= 0) {
     drawHeart(tl.x + tl.w / 2, tl.y + tl.h / 2 - (bigPanel() ? 14 : 8),
               bigPanel() ? 10 : 6, C_MINT);
-    centerTextIn(tl, "it's today!", tl.h / 2 - capH, bigPanel() ? 4 : 2, C_MINT);
+    centerTextIn(tl, "it's today!", tl.h / 2 - (bigPanel() ? 22 : 14),
+                 bigPanel() ? 4 : 2, C_MINT);
   } else {
     String num = daysKnown ? String(daysLeft) : "--";
-    drawPixelNumber(num, tl.x + tl.w / 2, tl.y + (tl.h - capH) / 2,
-                    tl.w - (bigPanel() ? 28 : 12), tl.h - capH - (bigPanel() ? 20 : 8),
+    drawPixelNumber(num, tl.x + tl.w / 2, tl.y + tl.h / 2,
+                    tl.w - (bigPanel() ? 28 : 12), tl.h - (bigPanel() ? 20 : 8),
                     C_MINT);
-    String cap = daysKnown ? ("days  ·  " + dateShort) : dateShort;
-    centerTextIn(tl, cap, tl.h / 2 - (bigPanel() ? 14 : 8), 2, C_DIM);
   }
+  (void)dateShort;  // date caption removed by request
 
   // ---- top-right: wifi state ----
+  int capH = bigPanel() ? 22 : 14;
   uint16_t wcol = (wifi == WifiIcon::GREEN) ? C_GRN
                   : (wifi == WifiIcon::YELLOW) ? C_YEL
                                                : C_RED;
@@ -366,7 +374,7 @@ void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
                                                     : "tap to reconnect";
   int iconSize = bigPanel() ? 30 : 18;
   drawWifiIcon(tr.x + tr.w / 2, tr.y + (tr.h - capH) / 2 + iconSize / 2 + 2,
-               iconSize, wcol, C_CARD);
+               iconSize, wcol);
   centerTextIn(tr, wlabel, tr.h / 2 - (bigPanel() ? 14 : 8), 2, wcol);
 
   // ---- bottom: the message ----

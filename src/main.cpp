@@ -201,15 +201,21 @@ static void netTick() {
         portalStopAP();
         portalStartMDNS();
       }
-      if (WiFi.status() != WL_CONNECTED) {
-        // the stack auto-reconnects on its own; this is only a slow backstop
-        // (nudging every few seconds fights the in-progress attempt and
-        // spams "sta is connecting, return error")
-        static uint32_t lastRetry = 0;
-        if (now - lastRetry > 30000) {
-          lastRetry = now;
-          Serial.println("[net] wifi still down, nudging reconnect");
-          WiFi.reconnect();
+      {
+        // Brief drops happen (hotspots hiccup); the stack auto-reconnects by
+        // itself. Only nudge it after 30 CONTINUOUS seconds down — nudging
+        // sooner collides with the in-flight attempt and logs the harmless
+        // but scary "sta is connecting / connect failed! 0x3007".
+        static uint32_t downSince = 0;
+        if (WiFi.status() != WL_CONNECTED) {
+          if (downSince == 0) downSince = now;
+          if (now - downSince > 30000) {
+            downSince = now;
+            Serial.println("[net] wifi down 30s, nudging reconnect");
+            WiFi.reconnect();
+          }
+        } else {
+          downSince = 0;
         }
       }
       break;
