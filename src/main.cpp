@@ -354,6 +354,35 @@ static void btnBShort() {  // BOOT button = pairing/info overlay
 }
 
 // ---------- drawing ----------
+// ---------- the message list ----------
+// Tap the message box to cycle: every line of the synced message (message.txt
+// can hold several lines!) followed by the built-in extras from config.h.
+static int s_msgIndex = 0;
+
+static String currentMessage() {
+  String items[8];
+  int n = 0;
+
+  String base = settings().message;
+  int start = 0;
+  while (n < 6 && start <= (int)base.length()) {
+    int nl = base.indexOf('\n', start);
+    String piece = (nl < 0) ? base.substring(start) : base.substring(start, nl);
+    piece.trim();
+    if (piece.length()) items[n++] = piece;
+    if (nl < 0) break;
+    start = nl + 1;
+  }
+
+  static const char *extras[] = MESSAGE_EXTRAS;
+  for (size_t i = 0; i < sizeof(extras) / sizeof(extras[0]) && n < 8; i++) {
+    if (strlen(extras[i]) > 0) items[n++] = extras[i];
+  }
+
+  if (n == 0) items[n++] = DEFAULT_MESSAGE;
+  return items[s_msgIndex % n];
+}
+
 static WifiIcon wifiIconState() {
   if (s_net == NetState::ONLINE && WiFi.status() == WL_CONNECTED) {
     return s_updatingIcon ? WifiIcon::ORANGE : WifiIcon::GREEN;
@@ -377,7 +406,7 @@ static void drawCurrentPage() {
     long secondsLeft = (long)(s_targetEpoch - time(nullptr));
     daysLeft = secondsLeft <= 0 ? 0 : (secondsLeft + 86399L) / 86400L;
   }
-  uiHome(ready, daysLeft, s_dateShort, wifiIconState(), settings().message);
+  uiHome(ready, daysLeft, s_dateShort, wifiIconState(), currentMessage());
 }
 
 // ---------- arduino ----------
@@ -469,7 +498,9 @@ void loop() {
     if (s_wifiInfoUntil > now) {
       s_wifiInfoUntil = 0;             // dismiss the (BOOT-opened) overlay
     } else if (zone == 1) {
-      wifiBoxAction();
+      wifiBoxAction();                 // wifi box: reconnect / update check
+    } else if (zone == 2) {
+      s_msgIndex++;                    // message box: next message
     }
     s_lastDraw = 0;
   }

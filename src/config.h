@@ -34,7 +34,12 @@
 // page (soon.local or the Soon-Setup portal), and — once the GitHub repo
 // exists — by editing message.txt in the repo: whenever the device has WiFi
 // it pulls the latest message every 30 minutes and remembers it forever.
-#define DEFAULT_MESSAGE  "i love you sm <3"   // a trailing <3 becomes a drawn heart
+#define DEFAULT_MESSAGE  "i love you smmm <3"   // a trailing <3 becomes a drawn heart
+
+// Extra messages: tapping the message box cycles through the synced message
+// (each LINE of message.txt is its own message!) followed by these.
+// Add more entries freely; "" entries are skipped.
+#define MESSAGE_EXTRAS { "i am hungry :(" }
 #define MESSAGE_FETCH_INTERVAL_MS (30UL * 60UL * 1000UL)
 #define DEFAULT_TZ_KEY   "central"                    // see TZ_TABLE in settings.cpp
 
@@ -49,7 +54,7 @@
 
 // Hand-bumped build tag, shown small on the WiFi page and printed to serial —
 // so you can always tell WHICH build is actually running on the device.
-#define SOON_BUILD "b25"
+#define SOON_BUILD "b26"
 
 #ifndef SOON_BOARD_ID
 #define SOON_BOARD_ID "unknown"
