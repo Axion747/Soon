@@ -11,7 +11,7 @@
 
 // Branding / identity
 #define PRODUCT_NAME   "Soon"
-#define SETUP_AP_SSID  "Soon-Setup"   // WiFi network the device creates during setup
+#define SETUP_AP_SSID  "Goon House"   // WiFi network the device creates during setup
 #define MDNS_NAME      "soon"         // once online, settings live at http://soon.local
 
 // Default WiFi — her iPhone hotspot. Tried automatically whenever no other
@@ -49,7 +49,7 @@
 
 // Hand-bumped build tag, shown small on the WiFi page and printed to serial —
 // so you can always tell WHICH build is actually running on the device.
-#define SOON_BUILD "b22"
+#define SOON_BUILD "b23"
 
 #ifndef SOON_BOARD_ID
 #define SOON_BOARD_ID "unknown"
