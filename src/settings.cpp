@@ -56,7 +56,7 @@ void settingsSaveMessage(const String &msg) {
   String m = msg;
   m.trim();
   if (!m.length() || m == s_settings.message) return;
-  if (m.length() > 120) m = m.substring(0, 120);
+  if (m.length() > 500) m = m.substring(0, 500);
   s_settings.message = m;
   s_prefs.putString("msg", m);
 }

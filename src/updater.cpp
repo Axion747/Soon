@@ -37,7 +37,7 @@ bool updaterFetchMessage(String &out) {
   if (code == HTTP_CODE_OK) {
     out = http.getString();
     out.trim();
-    if (out.length() > 120) out = out.substring(0, 120);
+    if (out.length() > 500) out = out.substring(0, 500);
     ok = out.length() > 0;
   }
   http.end();

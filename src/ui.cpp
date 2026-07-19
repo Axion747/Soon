@@ -11,13 +11,34 @@ static bool s_beginOk = false;
 #endif
 
 #ifdef SOON_LCD_TOUCH
-// T-Display-S3 Touch variant: CST816 over I2C (SensorLib driver — the same
-// one LilyGO's AMOLED library uses internally). Probed at boot; quietly
-// absent on non-touch units, in which case the buttons cover everything.
+// T-Display-S3 Touch variant: CST816 over I2C, read DIRECTLY via registers
+// (the classic minimal driver — deterministic, no library layers that can
+// half-fail silently). Probed at boot; quietly absent on non-touch units,
+// in which case the buttons cover everything.
 #include <Wire.h>
-#include "TouchDrvCSTXXX.hpp"
-static TouchDrvCSTXXX s_touch;
 static bool s_touchOk = false;
+
+static int s_rawX = 0, s_rawY = 0;           // last raw reading (diagnostics)
+
+static uint8_t cstReadPoint(int16_t *sx, int16_t *sy) {
+  Wire.beginTransmission(0x15);
+  Wire.write(0x01);                          // start at gesture register
+  if (Wire.endTransmission(false) != 0) return 0;
+  if (Wire.requestFrom(0x15, 6) != 6) return 0;
+  Wire.read();                               // gesture (unused)
+  uint8_t fingers = Wire.read();
+  uint8_t xh = Wire.read(), xl = Wire.read();
+  uint8_t yh = Wire.read(), yl = Wire.read();
+  if (fingers == 0) return 0;
+  s_rawX = ((xh & 0x0F) << 8) | xl;          // native portrait: 0..169
+  s_rawY = ((yh & 0x0F) << 8) | yl;          // native portrait: 0..319
+  // map to our landscape (rotation 1). Field-calibrated on Ben's unit:
+  // rawY runs along landscape-x, rawX runs along landscape-y, NO inversion
+  // (tapping wifi/message boxes proved the axes land where the finger is).
+  *sx = s_rawY;
+  *sy = s_rawX;
+  return 1;
+}
 #endif
 
 // ---- rendering backend -----------------------------------------------
@@ -111,9 +132,9 @@ void uiBegin() {
   digitalWrite(TFT_BL, HIGH);
 #endif
 #ifdef SOON_LCD_TOUCH
-  // The CST816 sits in reset until its RST pin goes HIGH — probing the I2C
-  // bus before releasing reset always reads "not found". So: pulse reset,
-  // give the chip its boot time, THEN probe.
+  // The CST816 sits in reset until its RST pin goes HIGH — pulse reset,
+  // give the chip its boot time, then probe. Once found, disable its
+  // auto-sleep (reg 0xFE) so plain polling keeps working forever.
   pinMode(PIN_TOUCH_RST, OUTPUT);
   digitalWrite(PIN_TOUCH_RST, LOW);
   delay(30);
@@ -122,20 +143,13 @@ void uiBegin() {
   Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
   Wire.beginTransmission(0x15);  // CST816 I2C address
   if (Wire.endTransmission() == 0) {
-    s_touch.setTouchDrvModel(TouchDrv_CST8XX);
-    s_touch.setPins(PIN_TOUCH_RST, PIN_TOUCH_INT);
-    s_touch.begin(Wire, 0x15, PIN_TOUCH_SDA, PIN_TOUCH_SCL);
-    s_touchOk = true;  // the ACK above is the reliable signal, not begin()
-    // CST816 puts itself into deep sleep after a few idle seconds and then
-    // NACKs our polling (the "i2cRead returned Error -1" spam). We're a
-    // plugged-in gadget — keep it awake.
-    s_touch.disableAutoSleep();
-    // map native portrait coordinates to our landscape rotation
-    s_touch.setMaxCoordinates(tft.width(), tft.height());
-    s_touch.setSwapXY(true);
-    s_touch.setMirrorXY(true, false);
+    s_touchOk = true;
+    Wire.beginTransmission(0x15);
+    Wire.write(0xFE);            // DisAutoSleep — stay awake, we're plugged in
+    Wire.write(0x01);
+    Wire.endTransmission();
   }
-  Serial.printf("[ui] touch: %s\n", s_touchOk ? "CST816 OK" : "not found");
+  Serial.printf("[ui] touch: %s\n", s_touchOk ? "CST816 OK (raw driver)" : "not found");
 #endif
 #endif
 
@@ -484,7 +498,7 @@ static uint8_t touchRead(int16_t *x, int16_t *y) {
 #if defined(SOON_AMOLED)
   return amoled.getPoint(x, y, 1);  // 0 on non-touch boards
 #elif defined(SOON_LCD_TOUCH)
-  return s_touchOk ? s_touch.getPoint(x, y, 1) : 0;
+  return s_touchOk ? cstReadPoint(x, y) : 0;
 #else
   (void)x; (void)y;
   return 0;
@@ -504,13 +518,20 @@ int uiTapZone() {
   int16_t x = 0, y = 0;
   uint8_t n = touchRead(&x, &y);
   if (n > 0) {
-    if (!tracking) { tracking = true; sx = x; sy = y; tDown = now; }
+    if (!tracking) {
+      tracking = true; sx = x; sy = y; tDown = now;
+#ifdef SOON_LCD_TOUCH
+      Serial.printf("[touch] down raw=%d,%d -> %d,%d\n", s_rawX, s_rawY, x, y);
+#else
+      Serial.printf("[touch] down %d,%d\n", x, y);
+#endif
+    }
     lx = x; ly = y;
     return -1;
   }
   if (tracking) {
     tracking = false;
-    if (now - tDown < 800 && abs(lx - sx) < 30 && abs(ly - sy) < 30) {
+    if (now - tDown < 1200 && abs(lx - sx) < 40 && abs(ly - sy) < 40) {
       Rect tl, tr, bot;
       homeLayout(tl, tr, bot);
       int z = 2;
