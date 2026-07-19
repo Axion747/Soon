@@ -337,8 +337,9 @@ static void wifiBoxAction() {
   s_lastDraw = 0;
 }
 
-static void btnAShort() {  // side button = same as tapping the wifi box
-  wifiBoxAction();
+static void btnAShort() {  // side button = screen off / on
+  uiBacklight(!uiBacklightIsOn());
+  s_lastDraw = 0;
 }
 
 static void btnALong() {
@@ -349,6 +350,11 @@ static void btnALong() {
 }
 
 static void btnBShort() {  // BOOT button = pairing/info overlay
+  if (!uiBacklightIsOn()) {  // screen was off — just wake it
+    uiBacklight(true);
+    s_lastDraw = 0;
+    return;
+  }
   s_wifiInfoUntil = (s_wifiInfoUntil > millis()) ? 0 : millis() + 12000;
   s_lastDraw = 0;
 }
@@ -495,12 +501,14 @@ void loop() {
   // pairing overlay if the side button opened it.
   int zone = uiTapZone();
   if (zone >= 0) {
-    if (s_wifiInfoUntil > now) {
+    if (!uiBacklightIsOn()) {
+      uiBacklight(true);               // screen was off — a tap just wakes it
+    } else if (s_wifiInfoUntil > now) {
       s_wifiInfoUntil = 0;             // dismiss the (BOOT-opened) overlay
     } else if (zone == 1) {
-      wifiBoxAction();                 // wifi box: reconnect / update check
-    } else if (zone == 2) {
-      s_msgIndex++;                    // message box: next message
+      s_msgIndex++;                    // next message   (zones swapped to
+    } else if (zone == 2) {            //                 match Ben's unit)
+      wifiBoxAction();                 // reconnect / update check
     }
     s_lastDraw = 0;
   }

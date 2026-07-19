@@ -54,7 +54,7 @@
 
 // Hand-bumped build tag, shown small on the WiFi page and printed to serial —
 // so you can always tell WHICH build is actually running on the device.
-#define SOON_BUILD "b29"
+#define SOON_BUILD "b31"
 
 #ifndef SOON_BOARD_ID
 #define SOON_BOARD_ID "unknown"
