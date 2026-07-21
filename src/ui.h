@@ -17,8 +17,10 @@ enum class WifiIcon { RED, YELLOW, GREEN, ORANGE };
 void uiBegin();
 void uiBoot();   // "wanga" fade-in + heart (blocking, a few seconds)
 
+// battPct: 0..100 battery level, -1 = hide. battUsb: powered/charging over
+// USB (glyph shows full + "chg" instead of a percentage).
 void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
-            WifiIcon wifi, const String &msg);
+            WifiIcon wifi, const String &msg, int battPct, bool battUsb);
 void uiWifiInfo(bool online, const String &ssid, const String &info);  // overlay
 
 void uiUpdating(int percent, const String &fromV, const String &toV);

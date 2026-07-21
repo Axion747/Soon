@@ -346,9 +346,26 @@ void uiBoot() {
 #endif
 }
 
+// ---- battery glyph -------------------------------------------
+static void drawBattery(int rightX, int topY, int pct, bool usb) {
+  int w = 24, h = 11;
+  int x = rightX - w - 3;  // leave room for the nub
+  uint16_t col = usb ? C_MINT
+                 : (pct < 15) ? C_RED
+                 : (pct < 40) ? C_YEL
+                              : C_MINT;
+  g->drawRoundRect(x, topY, w, h, 2, C_DIM);
+  g->fillRect(x + w, topY + 3, 3, h - 6, C_DIM);            // the nub
+  int fill = usb ? (w - 4) : ((w - 4) * pct) / 100;
+  if (fill > 0) g->fillRect(x + 2, topY + 2, fill, h - 4, col);
+  g->setTextDatum(MR_DATUM);
+  g->setTextColor(C_DIM, C_CARD);
+  g->drawString(usb ? "chg" : (String(pct) + "%"), x - 5, topY + h / 2 + 1, 2);
+}
+
 // ---- THE page (bento) ----------------------------------------
 void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
-            WifiIcon wifi, const String &msg) {
+            WifiIcon wifi, const String &msg, int battPct, bool battUsb) {
 #ifndef SOON_AMOLED
   // LCDs draw direct to the panel (no frame buffer): repaint the WHOLE page
   // only when something actually changed, skip entirely otherwise. That's
@@ -357,7 +374,8 @@ void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
   {
     static String lastSig;
     String sig = String(daysKnown ? daysLeft : -1) + "|" + dateShort + "|" +
-                 String((int)wifi) + "|" + msg;
+                 String((int)wifi) + "|" + msg + "|" + String(battPct) + "|" +
+                 String((int)battUsb);
     if (sig == lastSig && s_screen == Screen::HOME) return;
     lastSig = sig;
     s_screen = Screen::NONE;  // force a full clear + redraw
@@ -436,6 +454,8 @@ void uiHome(bool daysKnown, long daysLeft, const String &dateShort,
     int hx = bot.x + (bot.w - hSpace) / 2 + tw / 2 + 2 * hr + 8;
     drawHeart(hx, cy - hr / 2, hr, C_ACCENT);
   }
+
+  if (battPct >= 0) drawBattery(bot.x + bot.w - 8, bot.y + 6, battPct, battUsb);
 
   flush();
 }

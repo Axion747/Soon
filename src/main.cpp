@@ -98,10 +98,19 @@ static void seedClock() {
 }
 
 static void persistClockTick() {
+  // Checkpoint "now" to flash so a power cycle resumes from (nearly) the
+  // right time even with no WiFi ever. First save 1 min after boot, then
+  // every 15 min — the old 6-hour cadence meant short plug-in sessions
+  // NEVER saved, so every reboot fell back to the firmware build date and
+  // the countdown appeared frozen.
   static uint32_t lastSave = 0;
-  if (millis() - lastSave > 6UL * 3600UL * 1000UL) {  // every 6h
-    lastSave = millis();
-    if (clockIsSet()) settingsSaveEpoch(time(nullptr));
+  uint32_t now = millis();
+  if (!clockIsSet()) return;
+  bool due = (lastSave == 0) ? (now > 60000UL)
+                             : (now - lastSave > 15UL * 60UL * 1000UL);
+  if (due) {
+    lastSave = now;
+    settingsSaveEpoch(time(nullptr));
   }
 }
 
@@ -360,6 +369,44 @@ static void btnBShort() {  // BOOT button = pairing/info overlay
 }
 
 // ---------- drawing ----------
+// ---------- battery ----------
+static int s_battPct = -1;    // -1 = unknown/no reading yet
+static bool s_battUsb = false;
+
+static void batteryTick() {
+#ifdef PIN_BAT_ADC
+  static uint32_t last = 0;
+  if (last != 0 && millis() - last < 30000) return;  // battery moves slowly
+  last = millis();
+
+  uint32_t mv = 0;
+  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(PIN_BAT_ADC);
+  mv = (mv / 8) * 2;  // on-board divider halves the battery voltage
+
+  s_battUsb = mv > 4350;  // above any LiPo resting voltage -> USB power
+  // LiPo discharge curve, piecewise linear
+  static const struct { int mv, pct; } T[] = {
+      {4150, 100}, {4000, 85}, {3900, 70}, {3800, 55}, {3700, 40},
+      {3600, 25},  {3500, 12}, {3400, 5},  {3300, 0}};
+  int pct;
+  if ((int)mv >= T[0].mv) {
+    pct = 100;
+  } else if ((int)mv <= T[8].mv) {
+    pct = 0;
+  } else {
+    pct = 0;
+    for (int i = 0; i < 8; i++) {
+      if ((int)mv <= T[i].mv && (int)mv > T[i + 1].mv) {
+        pct = T[i + 1].pct + (int)((T[i].pct - T[i + 1].pct) *
+              (float)((int)mv - T[i + 1].mv) / (T[i].mv - T[i + 1].mv));
+        break;
+      }
+    }
+  }
+  s_battPct = pct;
+#endif
+}
+
 // ---------- the message list ----------
 // Tap the message box to cycle: every line of the synced message (message.txt
 // can hold several lines!) followed by the built-in extras from config.h.
@@ -412,7 +459,8 @@ static void drawCurrentPage() {
     long secondsLeft = (long)(s_targetEpoch - time(nullptr));
     daysLeft = secondsLeft <= 0 ? 0 : (secondsLeft + 86399L) / 86400L;
   }
-  uiHome(ready, daysLeft, s_dateShort, wifiIconState(), currentMessage());
+  uiHome(ready, daysLeft, s_dateShort, wifiIconState(), currentMessage(),
+         s_battPct, s_battUsb);
 }
 
 // ---------- arduino ----------
@@ -465,6 +513,7 @@ void loop() {
   pollButton(s_btnB, btnBShort, nullptr);
   netTick();
   persistClockTick();
+  batteryTick();
 
   // reflect NTP status to the portal page; save a good fix right away
   static bool ntpNoted = false;
@@ -505,10 +554,18 @@ void loop() {
       uiBacklight(true);               // screen was off — a tap just wakes it
     } else if (s_wifiInfoUntil > now) {
       s_wifiInfoUntil = 0;             // dismiss the (BOOT-opened) overlay
-    } else if (zone == 1) {
-      s_msgIndex++;                    // next message   (zones swapped to
-    } else if (zone == 2) {            //                 match Ben's unit)
-      wifiBoxAction();                 // reconnect / update check
+    } else {
+#ifdef SOON_AMOLED
+      // AMOLED touch coordinates are correct as shipped by LilyGO's library:
+      // zone 1 IS the wifi box, zone 2 IS the message bar.
+      if (zone == 1) wifiBoxAction();
+      else if (zone == 2) s_msgIndex++;
+#else
+      // LCD Touch unit reports these two regions swapped (field-calibrated
+      // on Ben's device) — bind actions accordingly.
+      if (zone == 1) s_msgIndex++;
+      else if (zone == 2) wifiBoxAction();
+#endif
     }
     s_lastDraw = 0;
   }
