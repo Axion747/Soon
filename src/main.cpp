@@ -35,8 +35,30 @@ enum class NetState { TRYING, AP_WAIT, ONLINE };
 static NetState s_net = NetState::TRYING;
 
 static String s_pendingSsid, s_pendingPass;
-static bool s_credsArePending = false;  // save these to flash on success
 static bool s_fromPortal = false;       // attempt came from the setup page
+
+// Round-robin over the saved-network list (+ the built-in hotspot default)
+static int s_tryIdx = 0;
+
+static bool nextCandidate(String &ssid, String &pass) {
+  int n = settingsWifiCount();
+  bool hasDefault = strlen(DEFAULT_WIFI_SSID) > 0;
+  for (int i = 0; i < n && hasDefault; i++) {
+    if (settingsWifiAt(i).ssid == DEFAULT_WIFI_SSID) hasDefault = false;
+  }
+  int total = n + (hasDefault ? 1 : 0);
+  if (total == 0) return false;
+  int i = s_tryIdx++ % total;
+  if (i < n) {
+    WifiCred c = settingsWifiAt(i);
+    ssid = c.ssid;
+    pass = c.pass;
+  } else {
+    ssid = DEFAULT_WIFI_SSID;
+    pass = DEFAULT_WIFI_PASS;
+  }
+  return true;
+}
 static uint32_t s_tryStart = 0;
 static uint32_t s_connectedAt = 0;
 static bool s_apShutdownDone = false;
@@ -135,11 +157,10 @@ static void recomputeTarget() {
 }
 
 // ---------- net transitions ----------
-static void netTry(const String &ssid, const String &pass, bool pending, bool fromPortal) {
+static void netTry(const String &ssid, const String &pass, bool fromPortal) {
   s_net = NetState::TRYING;
   s_pendingSsid = ssid;
   s_pendingPass = pass;
-  s_credsArePending = pending;
   s_fromPortal = fromPortal;
   s_tryStart = millis();
   if (fromPortal) portalState().conn = ConnState::CONNECTING;
@@ -160,10 +181,8 @@ static void netOnline() {
   s_connectedAt = millis();
   s_apShutdownDone = !(WiFi.getMode() & WIFI_MODE_AP);
   portalState().conn = ConnState::OK;
-  if (s_credsArePending) {
-    settingsSaveWifi(s_pendingSsid, s_pendingPass);
-    s_credsArePending = false;
-  }
+  settingsAddWifi(s_pendingSsid, s_pendingPass);  // remember (or bump) this net
+  s_tryIdx = 0;                                   // future retries start fresh
   if (s_apShutdownDone) {
     portalState().apMode = false;
     portalStartMDNS();
@@ -184,23 +203,19 @@ static void netTick() {
         Serial.println("[net] connect attempt timed out");
         if (s_fromPortal) portalState().conn = ConnState::FAIL;
         s_fromPortal = false;
-        s_credsArePending = false;
         netEnterApWait();
       }
       break;
     }
     case NetState::AP_WAIT: {
       if (WiFi.status() == WL_CONNECTED) { netOnline(); break; }
-      // Periodically retry a known network (saved one first, else the
-      // hotspot default) — but not while someone's using the setup page.
+      // Periodically retry known networks, cycling through the saved list
+      // (+ the hotspot default) — but not while someone's on the setup page.
       static uint32_t lastAutoTry = 0;
-      bool haveKnown = settings().ssid.length() || strlen(DEFAULT_WIFI_SSID) > 0;
-      if (haveKnown && now - lastAutoTry > 45000 && portalMsSinceActivity() > 60000) {
+      if (now - lastAutoTry > 45000 && portalMsSinceActivity() > 60000) {
         lastAutoTry = now;
-        bool useSaved = settings().ssid.length() > 0;
-        netTry(useSaved ? settings().ssid : DEFAULT_WIFI_SSID,
-               useSaved ? settings().pass : DEFAULT_WIFI_PASS,
-               /*pending=*/!useSaved, /*fromPortal=*/false);
+        String ssid, pass;
+        if (nextCandidate(ssid, pass)) netTry(ssid, pass, /*fromPortal=*/false);
       }
       break;
     }
@@ -270,7 +285,7 @@ static void runUpdateCheck() {
 
 // ---------- portal callbacks ----------
 void appOnWifiSubmit(const String &ssid, const String &pass) {
-  netTry(ssid, pass, /*pending=*/true, /*fromPortal=*/true);
+  netTry(ssid, pass, /*fromPortal=*/true);
 }
 
 void appOnSettingsSaved() {
@@ -336,12 +351,8 @@ static void wifiBoxAction() {
       s_forceUpdateCheck = true;   // ...the check runs on the next loop pass
     }
   } else if (s_net != NetState::TRYING) {
-    bool useSaved = settings().ssid.length() > 0;
-    if (useSaved || strlen(DEFAULT_WIFI_SSID) > 0) {
-      netTry(useSaved ? settings().ssid : DEFAULT_WIFI_SSID,
-             useSaved ? settings().pass : DEFAULT_WIFI_PASS,
-             /*pending=*/!useSaved, /*fromPortal=*/false);
-    }
+    String ssid, pass;
+    if (nextCandidate(ssid, pass)) netTry(ssid, pass, /*fromPortal=*/false);
   }
   s_lastDraw = 0;
 }
@@ -498,10 +509,22 @@ void setup() {
   WiFi.setAutoReconnect(true); // let the stack heal drops on its own
   portalStartServer();
 
-  if (settings().ssid.length()) {
-    netTry(settings().ssid, settings().pass, false, false);
-  } else if (strlen(DEFAULT_WIFI_SSID) > 0) {
-    netTry(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS, /*pending=*/true, false);
+  // Prefer a saved network that the pre-scan actually SAW in the air;
+  // fall back to the hotspot default, then to plain round-robin.
+  String ssid, pass;
+  bool have = false;
+  for (int i = 0; i < settingsWifiCount() && !have; i++) {
+    WifiCred c = settingsWifiAt(i);
+    if (portalScanSaw(c.ssid)) { ssid = c.ssid; pass = c.pass; have = true; }
+  }
+  if (!have && strlen(DEFAULT_WIFI_SSID) > 0 && portalScanSaw(DEFAULT_WIFI_SSID)) {
+    ssid = DEFAULT_WIFI_SSID;
+    pass = DEFAULT_WIFI_PASS;
+    have = true;
+  }
+  if (!have) have = nextCandidate(ssid, pass);
+  if (have) {
+    netTry(ssid, pass, /*fromPortal=*/false);
   } else {
     netEnterApWait();
   }

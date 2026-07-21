@@ -63,7 +63,11 @@ static void handleStatus() {
   JsonDocument doc;
   doc["mode"] = s_state.apMode ? "ap" : "sta";
   doc["connected"] = (WiFi.status() == WL_CONNECTED);
-  doc["ssid"] = s_state.apMode ? settings().ssid : WiFi.SSID();
+  doc["ssid"] = (WiFi.status() == WL_CONNECTED) ? WiFi.SSID() : String("");
+  JsonArray saved = doc["savedNets"].to<JsonArray>();
+  for (int i = 0; i < settingsWifiCount(); i++) {
+    saved.add(settingsWifiAt(i).ssid);
+  }
   doc["ip"] = WiFi.localIP().toString();
   doc["version"] = FW_VERSION;
   doc["board"] = SOON_BOARD_ID;
@@ -106,13 +110,24 @@ static void handleStatus() {
 // cache it, and serve the cache instantly. "Scan again" kicks off a
 // best-effort async rescan; if it finds anything, the cache is refreshed.
 static String s_scanCache;
+static String s_seenSsids[24];
+static int s_seenCount = 0;
+
+bool portalScanSaw(const String &ssid) {
+  for (int i = 0; i < s_seenCount; i++) {
+    if (s_seenSsids[i] == ssid) return true;
+  }
+  return false;
+}
 
 static String buildScanJson(int n) {
   JsonDocument doc;
   JsonArray nets = doc["networks"].to<JsonArray>();
+  s_seenCount = 0;
   for (int i = 0; i < n; i++) {
     String ssid = WiFi.SSID(i);
     if (!ssid.length()) continue;
+    if (s_seenCount < 24) s_seenSsids[s_seenCount++] = ssid;
     bool dup = false;  // hide duplicate SSIDs (mesh APs etc.)
     for (JsonObject o : nets) {
       if (ssid == o["ssid"].as<const char *>()) { dup = true; break; }
@@ -193,6 +208,12 @@ static void handleTime() {
   if (epoch > 1609459200L) appOnTimeSet((time_t)epoch);
 }
 
+static void handleForgetNet() {
+  String ssid = server.arg("ssid");
+  if (ssid.length()) settingsRemoveWifi(ssid);
+  sendJson("{\"ok\":true}");
+}
+
 static void handleNotFound() {
   if (s_state.apMode) {
     // Captive portal: any unknown URL bounces to the setup page
@@ -211,6 +232,7 @@ void portalBegin() {
   server.on("/api/settings", HTTP_POST, handleSettings);
   server.on("/api/checkupdate", HTTP_POST, handleCheckUpdate);
   server.on("/api/forget", HTTP_POST, handleForget);
+  server.on("/api/forgetnet", HTTP_POST, handleForgetNet);
   server.on("/api/time", HTTP_POST, handleTime);
 
   // OS connectivity probes -> redirect, which makes phones pop the portal open

@@ -25,6 +25,7 @@ void portalStopAP();    // tear down AP once we're happily online
 void portalStartMDNS(); // http://soon.local when on the home network
 void portalHandle();    // call every loop()
 uint32_t portalMsSinceActivity();  // ms since the setup page last talked to us
+bool portalScanSaw(const String &ssid);  // network present in the last scan?
 
 // Implemented in main.cpp — the portal calls these when the user acts
 void appOnWifiSubmit(const String &ssid, const String &pass);

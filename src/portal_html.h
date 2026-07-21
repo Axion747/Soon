@@ -93,6 +93,12 @@ static const char PORTAL_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- ===== Saved networks (tap x to forget one) ===== -->
+  <div class="card hidden" id="savedCard">
+    <h2>Saved networks</h2>
+    <div id="savedList"></div>
+  </div>
+
   <!-- ===== Device clock (works with or without internet) ===== -->
   <div class="card" id="clockCard">
     <h2>Device clock</h2>
@@ -137,6 +143,17 @@ function loadStatus(){
       $('tz').value = s.tz;
     }
     $('foot').textContent = 'Soon v' + s.version + ' ' + (s.build || '') + ' · ' + s.board;
+    var sl = $('savedList'); sl.innerHTML = '';
+    if (s.savedNets && s.savedNets.length) {
+      $('savedCard').classList.remove('hidden');
+      s.savedNets.forEach(function(nm){
+        var d = document.createElement('div');
+        d.className = 'net';
+        d.innerHTML = '<span>' + nm + '</span><span class="bars" style="cursor:pointer">&#10005;</span>';
+        d.lastChild.onclick = function(){ post('/api/forgetnet', {ssid: nm}).then(loadStatus); };
+        sl.appendChild(d);
+      });
+    } else { $('savedCard').classList.add('hidden'); }
     $('clkMsg').innerHTML = 'Device shows: <b>' + s.time + '</b><br>' +
       (s.timeSynced ? 'synced from the internet' : 'running on its own clock');
     if (s.mode === 'ap') {
